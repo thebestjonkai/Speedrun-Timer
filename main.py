@@ -15,6 +15,7 @@ Die Dateien im Überblick:
 """
 
 import tkinter as tk
+from pathlib import Path
 
 import stil
 from einstellungen import EinstellungsFenster
@@ -40,6 +41,9 @@ TEXT_JE_ZUSTAND = {
 # Abstand zwischen zwei Bildschirmaktualisierungen in Millisekunden.
 # 16 ms entsprechen etwa 60 Aktualisierungen pro Sekunde.
 AKTUALISIERUNGS_INTERVALL_MS = 16
+
+# Fenstersymbol für Titelleiste und Taskleiste. Liegt neben diesem Skript.
+ICON_DATEI = Path(__file__).with_name("timer_icon.ico")
 
 
 class TimerFenster:
@@ -85,6 +89,13 @@ class TimerFenster:
         self.root.title("Speedrun-Timer")
         self.root.configure(bg=stil.FARBE_HINTERGRUND)
         self.root.resizable(False, False)
+
+        # Fenstersymbol setzen. Fehlt die Datei, läuft das Programm einfach
+        # mit dem Standardsymbol weiter - das ist kein Grund abzubrechen.
+        try:
+            self.root.iconbitmap(str(ICON_DATEI))
+        except tk.TclError:
+            pass
 
         rahmen = tk.Frame(self.root, bg=stil.FARBE_HINTERGRUND, padx=16, pady=12)
         rahmen.pack(fill="both", expand=True)
