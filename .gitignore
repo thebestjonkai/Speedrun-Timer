@@ -1,0 +1,8 @@
+# Von Python automatisch erzeugte Dateien.
+# Sie entstehen beim Ausführen neu und gehören nicht ins Repository.
+__pycache__/
+*.pyc
+
+# Persönliche Tastenbelegung. Wird beim ersten Ändern eines Hotkeys
+# angelegt; fehlt sie, startet das Programm mit der Standardbelegung.
+timer_config.json

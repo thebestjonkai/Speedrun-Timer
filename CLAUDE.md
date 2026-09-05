@@ -111,6 +111,7 @@ doppelt vergebene Einträge führen still zur Standardbelegung.
 
 ## Repository
 
-`timer_config.json` wird zur Laufzeit erzeugt und liegt mit im Repo; sie
-enthält nur die Tastenbelegung. Eine `.gitignore` gibt es nicht, `__pycache__`
-ist mit eingecheckt.
+`timer_config.json` und `__pycache__/` sind über `.gitignore` ausgenommen.
+Die Konfigurationsdatei entsteht erst beim ersten Ändern eines Hotkeys; in
+einem frischen Klon fehlt sie, und das Programm startet mit der
+Standardbelegung.
