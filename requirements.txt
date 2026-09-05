@@ -1,0 +1,6 @@
+# Abhaengigkeiten des Speedrun-Timers
+# Installieren mit:  pip install -r requirements.txt
+
+# Globale Hotkeys, die auch ohne Fensterfokus funktionieren.
+# tkinter ist Teil der Python-Standardbibliothek und braucht keinen Eintrag.
+pynput>=1.7.6
