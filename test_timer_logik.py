@@ -10,7 +10,7 @@ einer Fehlermeldung ab.
 
 import time
 
-from timer_logik import Timer, Zustand, formatiere_zeit
+from timer_logik import Timer, Zustand, formatiere_zeit, lies_zeit
 
 
 def test_formatierung():
@@ -159,6 +159,73 @@ def test_startet_neuen_lauf_meldet_richtig():
     assert t.startet_neuen_lauf() is False  # GESTOPPT -> "Weiter"
     t.zuruecksetzen()
     assert t.startet_neuen_lauf() is True
+
+
+def test_zeit_einlesen():
+    assert lies_zeit("12") == 12.0
+    assert lies_zeit("1:23") == 83.0
+    assert lies_zeit("1:23.456") == 83.456
+    # Deutsche Tastatur: Komma muss genauso gehen wie Punkt.
+    assert lies_zeit("1:23,456") == 83.456
+    assert lies_zeit("2:03:04") == 7384.0
+    assert lies_zeit("0:00.001") == 0.001
+    assert lies_zeit("  1:30  ") == 90.0
+    assert lies_zeit("0") == 0.0
+
+
+def test_zeit_einlesen_lehnt_unsinn_ab():
+    for eingabe in ("", "   ", "abc", "1:2:3:4", "-5", "1:-2", "1:60",
+                    "1:99", "2:70:00", "1.2.3", "12:ab", None, "1:"):
+        assert lies_zeit(eingabe) is None, f"haette None sein muessen: {eingabe!r}"
+
+
+def test_zeit_setzen_aus_bereit():
+    t = Timer()
+    assert t.setze_zeit(83.456) is True
+    # BEREIT passt nicht mehr, wenn die Uhr nicht auf null steht.
+    assert t.zustand is Zustand.GESTOPPT
+    assert t.verstrichene_zeit() == 83.456
+    assert t.formatierte_zeit() == "1:23.456"
+
+
+def test_zeit_setzen_waehrend_pause():
+    t = Timer()
+    t.start()
+    time.sleep(0.05)
+    t.pause()
+    t.setze_zeit(10.0)
+    assert t.zustand is Zustand.PAUSIERT
+    assert t.verstrichene_zeit() == 10.0
+    # Die vorher gelaufene Zeit darf nicht wieder auftauchen.
+    time.sleep(0.05)
+    assert t.verstrichene_zeit() == 10.0
+
+
+def test_zeit_setzen_waehrend_laufend():
+    t = Timer()
+    t.start()
+    time.sleep(0.05)
+    t.setze_zeit(100.0)
+    assert t.zustand is Zustand.LAEUFT
+    # Ab dem gesetzten Wert läuft es weiter, die alten 0,05 s zählen nicht mit.
+    assert 100.0 <= t.verstrichene_zeit() < 100.02
+    time.sleep(0.05)
+    assert 100.04 < t.verstrichene_zeit() < 100.1
+
+
+def test_zeit_setzen_lehnt_negatives_ab():
+    t = Timer()
+    t.setze_zeit(50.0)
+    assert t.setze_zeit(-1) is False
+    assert t.verstrichene_zeit() == 50.0
+
+
+def test_reset_nach_zeit_setzen():
+    t = Timer()
+    t.setze_zeit(500.0)
+    t.zuruecksetzen()
+    assert t.zustand is Zustand.BEREIT
+    assert t.verstrichene_zeit() == 0.0
 
 
 def test_reset_aus_jedem_zustand():

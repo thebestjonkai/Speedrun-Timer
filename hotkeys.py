@@ -29,7 +29,7 @@ KONFIG_DATEI = Path(__file__).with_name("timer_config.json")
 
 # Die vier Aktionen. Die Reihenfolge bestimmt auch die Reihenfolge im
 # Einstellungsfenster.
-AKTIONEN = ("start", "pause", "stop", "reset")
+AKTIONEN = ("start", "pause", "stop", "reset", "kompakt")
 
 # Anzeigenamen für die Oberfläche.
 AKTION_BESCHRIFTUNG = {
@@ -37,6 +37,7 @@ AKTION_BESCHRIFTUNG = {
     "pause": "Pause",
     "stop": "Stop",
     "reset": "Reset",
+    "kompakt": "Kompakt",
 }
 
 # Standardbelegung in der Schreibweise von pynput:
@@ -48,6 +49,7 @@ STANDARD_BELEGUNG = {
     "pause": "<f12>+p",
     "stop": "<f12>+x",
     "reset": "<f12>+r",
+    "kompakt": "<f12>+k",
 }
 
 # Linke und rechte Varianten derselben Taste fassen wir zusammen. Sonst

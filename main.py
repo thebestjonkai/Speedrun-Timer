@@ -15,12 +15,14 @@ Die Dateien im Überblick:
 """
 
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 
 import stil
 from einstellungen import EinstellungsFenster
 from hotkeys import AKTION_BESCHRIFTUNG, AKTIONEN, HotkeyVerwaltung, lesbare_kombination
 from timer_logik import Timer, Zustand
+from zeit_eingabe import ZeitEingabe
 
 # Die Zeitanzeige wechselt je nach Zustand die Farbe - so siehst du auf einen
 # Blick, ob der Timer läuft, auch ohne den Text zu lesen.
@@ -45,6 +47,29 @@ AKTUALISIERUNGS_INTERVALL_MS = 16
 # Fenstersymbol für Titelleiste und Taskleiste. Liegt neben diesem Skript.
 ICON_DATEI = Path(__file__).with_name("timer_icon.ico")
 
+# Innenabstand des Rahmens in normaler Ansicht und im Kompaktmodus.
+RAND_NORMAL = {"padx": 16, "pady": 12}
+RAND_KOMPAKT = {"padx": 10, "pady": 2}
+
+# Grenzen für die Zeitanzeige. Darunter wird sie unleserlich, darüber
+# unhandlich.
+SCHRIFT_MIN = 10
+SCHRIFT_MAX = 300
+# Größe, mit der die Textmaße einmal gemessen werden. Schriften skalieren
+# linear, deshalb lässt sich daraus jede andere Größe hochrechnen.
+SCHRIFT_REFERENZ = 100
+
+# Anteil der Zeilenhöhe, den Ziffern tatsächlich ausfüllen.
+# Die Zeilenhöhe einer Schrift reicht von den Oberlängen bis unter die
+# Grundlinie (für Buchstaben wie "g"). Ziffern nutzen davon nur den mittleren
+# Teil - nachgemessen sind es bei Consolas rund 58 %. Ohne diese Korrektur
+# bleibt über und unter der Zeit unnötig viel Rand stehen.
+ZIFFERN_ANTEIL = 0.60
+
+# Kleinste Fenstergröße im Kompaktmodus. In der normalen Ansicht ergibt sie
+# sich aus den Bedienelementen und wird beim Aufbau ausgerechnet.
+MINDESTGROESSE_KOMPAKT = (110, 26)
+
 
 class TimerFenster:
     """Das Hauptfenster mit Zeitanzeige und Bedienknöpfen."""
@@ -58,8 +83,21 @@ class TimerFenster:
         self._letzter_zustand: Zustand | None = None
         # Das Einstellungsfenster, solange es offen ist.
         self._einstellungen: EinstellungsFenster | None = None
+        # Das Fenster zur Zeiteingabe, solange es offen ist.
+        self._zeit_eingabe: ZeitEingabe | None = None
+        # Kompaktmodus: nur die Zeit, ohne Titelleiste.
+        self._kompakt = False
+        # Merkt sich beim Ziehen den Griffpunkt innerhalb des Fensters.
+        self._zieh_versatz = (0, 0)
+        # Fenstergröße je Ansicht, damit beim Umschalten die zuletzt
+        # eingestellte Größe zurückkommt.
+        self._groesse_normal: str | None = None
+        self._breite_kompakt: int | None = None
+        # Zwischenspeicher für die Textmaße, siehe _passe_schrift_an.
+        self._mass_je_text: dict = {}
+        self._mindestgroesse_normal = (0, 0)
 
-        # Die Hotkey-Verwaltung bekommt genau die vier Aktionsmethoden.
+        # Die Hotkey-Verwaltung bekommt genau die fünf Aktionsmethoden.
         # Sie ruft sie nicht direkt auf, sondern über root.after - siehe
         # die Erklärung oben in hotkeys.py. Die Belegung wird dabei schon
         # aus timer_config.json geladen.
@@ -70,6 +108,7 @@ class TimerFenster:
                 "pause": self.aktion_pause,
                 "stop": self.aktion_stop,
                 "reset": self.aktion_zuruecksetzen,
+                "kompakt": self.aktion_kompakt,
             },
         )
 
@@ -88,7 +127,7 @@ class TimerFenster:
     def _baue_oberflaeche(self) -> None:
         self.root.title("Speedrun-Timer")
         self.root.configure(bg=stil.FARBE_HINTERGRUND)
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
 
         # Fenstersymbol setzen. Fehlt die Datei, läuft das Programm einfach
         # mit dem Standardsymbol weiter - das ist kein Grund abzubrechen.
@@ -97,25 +136,52 @@ class TimerFenster:
         except tk.TclError:
             pass
 
-        rahmen = tk.Frame(self.root, bg=stil.FARBE_HINTERGRUND, padx=16, pady=12)
-        rahmen.pack(fill="both", expand=True)
+        # Eigenes Schriftobjekt statt eines festen Tupels: Ändern wir seine
+        # Größe, zeichnet tkinter alle Beschriftungen neu, die es benutzen.
+        familie, groesse, dicke = stil.SCHRIFT_ZEIT
+        self.schrift_zeit = tkfont.Font(family=familie, size=groesse, weight=dicke)
+        self._mess_schrift = tkfont.Font(
+            family=familie, size=SCHRIFT_REFERENZ, weight=dicke
+        )
+
+        self.rahmen = tk.Frame(self.root, bg=stil.FARBE_HINTERGRUND, **RAND_NORMAL)
+        self.rahmen.pack(fill="both", expand=True)
 
         # --- Große Zeitanzeige in Monospace ----------------------------
         # Monospace ist hier wichtig: bei einer Proportionalschrift hätten
         # die Ziffern unterschiedliche Breiten und die Anzeige würde bei
         # jedem Millisekundenwechsel zappeln.
+        #
+        # Die Anzeige steckt in einem eigenen Bereich mit pack_propagate(False).
+        # Das ist der entscheidende Kniff: Normalerweise wächst ein Frame mit
+        # seinem Inhalt. Da wir aber umgekehrt die Schriftgröße aus der
+        # verfügbaren Fläche berechnen, würde sich beides gegenseitig
+        # hochschaukeln - größere Schrift, größerer Bereich, noch größere
+        # Schrift. pack_propagate(False) schneidet diese Rückkopplung durch:
+        # Die Größe des Bereichs kommt allein vom Fenster.
+        self.zeit_bereich = tk.Frame(
+            self.rahmen,
+            bg=stil.FARBE_HINTERGRUND,
+            width=self._textbreite(stil.SCHRIFT_ZEIT[1]) + 16,
+            height=self._texthoehe(stil.SCHRIFT_ZEIT[1]) + 8,
+        )
+        self.zeit_bereich.pack(pady=(4, 0), fill="both", expand=True)
+        self.zeit_bereich.pack_propagate(False)
+
         self.label_zeit = tk.Label(
-            rahmen,
+            self.zeit_bereich,
             text="0:00.000",
-            font=stil.SCHRIFT_ZEIT,
+            font=self.schrift_zeit,
             bg=stil.FARBE_HINTERGRUND,
             fg=stil.FARBE_TEXT,
         )
-        self.label_zeit.pack(pady=(4, 0))
+        self.label_zeit.pack(fill="both", expand=True)
+        # Sobald der Bereich seine Größe ändert, wird die Schrift nachgezogen.
+        self.zeit_bereich.bind("<Configure>", self._bei_bereich_groesse)
 
         # --- Kleine Zustandsanzeige darunter ---------------------------
         self.label_zustand = tk.Label(
-            rahmen,
+            self.rahmen,
             text="Bereit",
             font=stil.SCHRIFT_NORMAL,
             bg=stil.FARBE_HINTERGRUND,
@@ -124,39 +190,43 @@ class TimerFenster:
         self.label_zustand.pack(pady=(0, 10))
 
         # --- Die vier Buttons in einer Reihe ---------------------------
-        button_reihe = tk.Frame(rahmen, bg=stil.FARBE_HINTERGRUND)
-        button_reihe.pack(fill="x")
+        self.button_reihe = tk.Frame(self.rahmen, bg=stil.FARBE_HINTERGRUND)
+        self.button_reihe.pack(fill="x")
 
-        self.button_start = self._erzeuge_button(button_reihe, "Start", self.aktion_start)
-        self.button_pause = self._erzeuge_button(button_reihe, "Pause", self.aktion_pause)
-        self.button_stop = self._erzeuge_button(button_reihe, "Stop", self.aktion_stop)
-        self.button_reset = self._erzeuge_button(button_reihe, "Reset", self.aktion_zuruecksetzen)
+        self.button_start = self._erzeuge_button(self.button_reihe, "Start", self.aktion_start)
+        self.button_pause = self._erzeuge_button(self.button_reihe, "Pause", self.aktion_pause)
+        self.button_stop = self._erzeuge_button(self.button_reihe, "Stop", self.aktion_stop)
+        self.button_reset = self._erzeuge_button(self.button_reihe, "Reset", self.aktion_zuruecksetzen)
 
         for spalte, button in enumerate(
             (self.button_start, self.button_pause, self.button_stop, self.button_reset)
         ):
             button.grid(row=0, column=spalte, sticky="ew", padx=3)
             # Alle vier Spalten gleich breit machen.
-            button_reihe.columnconfigure(spalte, weight=1, uniform="buttons")
+            self.button_reihe.columnconfigure(spalte, weight=1, uniform="buttons")
 
         # --- Zeile mit der aktuellen Hotkey-Belegung -------------------
+        # wraplength lässt den Text umbrechen, statt das Fenster in die
+        # Breite zu ziehen. Der Wert wird bei Größenänderung angepasst.
         self.label_hotkeys = tk.Label(
-            rahmen,
+            self.rahmen,
             text="",
             font=stil.SCHRIFT_KLEIN,
             bg=stil.FARBE_HINTERGRUND,
             fg=stil.FARBE_TEXT_GEDIMMT,
+            wraplength=300,
+            justify="center",
         )
-        self.label_hotkeys.pack(pady=(10, 0))
+        self.label_hotkeys.pack(pady=(10, 0), fill="x")
 
-        # --- Fußleiste: Checkbox und Einstellungen ---------------------
-        fussleiste = tk.Frame(rahmen, bg=stil.FARBE_HINTERGRUND)
-        fussleiste.pack(fill="x", pady=(8, 0))
+        # --- Fußleiste: Checkbox und Knöpfe ----------------------------
+        self.fussleiste = tk.Frame(self.rahmen, bg=stil.FARBE_HINTERGRUND)
+        self.fussleiste.pack(fill="x", pady=(8, 0))
 
         self.var_immer_vorne = tk.BooleanVar(value=False)
         self.checkbox_vorne = tk.Checkbutton(
-            fussleiste,
-            text="Immer im Vordergrund",
+            self.fussleiste,
+            text="Immer vorn",
             variable=self.var_immer_vorne,
             command=self._setze_immer_vorne,
             font=stil.SCHRIFT_NORMAL,
@@ -171,7 +241,7 @@ class TimerFenster:
         self.checkbox_vorne.pack(side="left")
 
         self.button_einstellungen = tk.Button(
-            fussleiste,
+            self.fussleiste,
             text="Einstellungen",
             command=self.oeffne_einstellungen,
             font=stil.SCHRIFT_NORMAL,
@@ -180,6 +250,36 @@ class TimerFenster:
             **{k: v for k, v in stil.knopf_stil().items() if k != "font"},
         )
         self.button_einstellungen.pack(side="right")
+
+        self.button_kompakt = tk.Button(
+            self.fussleiste,
+            text="Kompakt",
+            command=self.aktion_kompakt,
+            font=stil.SCHRIFT_NORMAL,
+            padx=8,
+            pady=2,
+            **{k: v for k, v in stil.knopf_stil().items() if k != "font"},
+        )
+        self.button_kompakt.pack(side="right", padx=(0, 6))
+
+        self.button_zeit = tk.Button(
+            self.fussleiste,
+            text="Zeit",
+            command=self.oeffne_zeit_eingabe,
+            font=stil.SCHRIFT_NORMAL,
+            padx=8,
+            pady=2,
+            **{k: v for k, v in stil.knopf_stil().items() if k != "font"},
+        )
+        self.button_zeit.pack(side="right", padx=(0, 6))
+
+        self._baue_kontextmenue()
+
+        # Mausrad vergrößert und verkleinert das Fenster. Im Kompaktmodus
+        # ist das der einzige Weg, weil dort der Fensterrahmen fehlt.
+        self.root.bind("<MouseWheel>", self._bei_mausrad)
+
+        self._setze_mindestgroesse_normal()
 
     def _erzeuge_button(self, eltern: tk.Widget, beschriftung: str, befehl) -> tk.Button:
         """Erzeugt einen Button im dunklen Farbschema."""
@@ -193,6 +293,245 @@ class TimerFenster:
             pady=6,
             **stil.knopf_stil(),
         )
+
+    def _baue_kontextmenue(self) -> None:
+        """
+        Rechtsklick-Menü für den Kompaktmodus.
+
+        Dort gibt es keine Titelleiste mehr, also auch kein X zum Schließen.
+        Ohne diesen Ausweg käme man aus dem Programm nur noch über den
+        Task-Manager heraus.
+        """
+        self.kontextmenue = tk.Menu(
+            self.root,
+            tearoff=0,
+            bg=stil.FARBE_BUTTON,
+            fg=stil.FARBE_TEXT,
+            activebackground=stil.FARBE_BUTTON_AKTIV,
+            activeforeground=stil.FARBE_TEXT,
+            borderwidth=0,
+        )
+        self.kontextmenue.add_command(label="Normale Ansicht", command=self.aktion_kompakt)
+        self.kontextmenue.add_command(label="Zeit eingeben …", command=self.oeffne_zeit_eingabe)
+        self.kontextmenue.add_separator()
+        self.kontextmenue.add_command(label="Beenden", command=self._beim_schliessen)
+
+    def _setze_mindestgroesse_normal(self) -> None:
+        """
+        Ermittelt, wie klein die normale Ansicht werden darf.
+
+        Dafür wird die Zeitanzeige kurz auf die kleinstmögliche Schrift
+        gesetzt: Was das Fenster dann noch braucht, ist der Platzbedarf der
+        Bedienelemente - und damit die Untergrenze.
+        """
+        normale_hoehe = self.zeit_bereich.cget("height")
+        normale_breite = self.zeit_bereich.cget("width")
+
+        self.zeit_bereich.config(
+            width=self._textbreite(SCHRIFT_MIN) + 16,
+            height=self._texthoehe(SCHRIFT_MIN) + 8,
+        )
+        self.root.update_idletasks()
+        self._mindestgroesse_normal = (self.root.winfo_reqwidth(), self.root.winfo_reqheight())
+
+        self.zeit_bereich.config(width=normale_breite, height=normale_hoehe)
+        self.root.update_idletasks()
+        self.root.minsize(*self._mindestgroesse_normal)
+
+        # Startgröße: etwas breiter als unbedingt nötig, damit die Zeile mit
+        # der Hotkey-Belegung auf zwei statt drei Zeilen passt.
+        self.root.geometry(
+            f"{max(self.root.winfo_reqwidth(), 330)}x{self.root.winfo_reqheight()}"
+        )
+
+    # ------------------------------------------------------------------
+    # Größe der Zeitanzeige
+    # ------------------------------------------------------------------
+
+    def _textbreite(self, schriftgroesse: int, text: str = "0:00.000") -> int:
+        """Wie breit wäre dieser Text in der angegebenen Schriftgröße?"""
+        return int(self._mess_schrift.measure(text) * schriftgroesse / SCHRIFT_REFERENZ)
+
+    def _texthoehe(self, schriftgroesse: int) -> int:
+        """Wie hoch wäre eine Textzeile in der angegebenen Schriftgröße?"""
+        return int(self._mess_schrift.metrics("linespace") * schriftgroesse / SCHRIFT_REFERENZ)
+
+    def _ziffernhoehe(self, schriftgroesse: float) -> int:
+        """Wie hoch sind die Ziffern selbst - ohne den Leerraum der Zeile?"""
+        return int(self._texthoehe(int(schriftgroesse)) * ZIFFERN_ANTEIL)
+
+    def _kompakte_hoehe(self, breite: int) -> int:
+        """
+        Passende Fensterhöhe im Kompaktmodus zu einer gegebenen Breite.
+
+        Im Kompaktmodus soll sich das Fenster eng um die Zeit legen. Wäre die
+        Höhe frei wählbar, bliebe über und unter den Ziffern Leerraum, sobald
+        das Fenster höher ist als für die Schriftgröße nötig.
+        """
+        text_breite = max(breite - 2 * RAND_KOMPAKT["padx"] - 8, 1)
+        breite_referenz = self._masse(self.label_zeit.cget("text"))[0]
+        groesse = SCHRIFT_REFERENZ * text_breite / breite_referenz
+        groesse = max(SCHRIFT_MIN, min(SCHRIFT_MAX, groesse))
+        return self._ziffernhoehe(groesse) + 2 * RAND_KOMPAKT["pady"] + 6
+
+    def _masse(self, text: str) -> tuple:
+        """Breite und Ziffernhöhe des Textes in der Referenzgröße."""
+        if text not in self._mass_je_text:
+            self._mass_je_text[text] = (
+                max(self._mess_schrift.measure(text), 1),
+                max(int(self._mess_schrift.metrics("linespace") * ZIFFERN_ANTEIL), 1),
+            )
+        return self._mass_je_text[text]
+
+    def _bei_bereich_groesse(self, ereignis) -> None:
+        """Wird aufgerufen, wenn die Zeitanzeige mehr oder weniger Platz hat."""
+        self._passe_schrift_an(ereignis.width, ereignis.height)
+        # Die Hotkey-Zeile soll innerhalb der Fensterbreite umbrechen.
+        self.label_hotkeys.config(wraplength=max(self.root.winfo_width() - 32, 120))
+
+    def _passe_schrift_an(self, breite: int, hoehe: int) -> None:
+        """
+        Wählt die größte Schrift, mit der die Zeit noch vollständig passt.
+
+        Schriften skalieren linear: Wir messen den Text einmal in der
+        Referenzgröße und rechnen daraus hoch, statt Größen durchzuprobieren.
+        """
+        breite_referenz, hoehe_referenz = self._masse(self.label_zeit.cget("text"))
+
+        # Ein paar Pixel Luft, damit die Ränder der Ziffern nicht anstoßen.
+        passend_zur_breite = SCHRIFT_REFERENZ * max(breite - 8, 1) / breite_referenz
+        passend_zur_hoehe = SCHRIFT_REFERENZ * max(hoehe - 4, 1) / hoehe_referenz
+
+        neue_groesse = int(min(passend_zur_breite, passend_zur_hoehe))
+        neue_groesse = max(SCHRIFT_MIN, min(SCHRIFT_MAX, neue_groesse))
+
+        # Nur bei echter Änderung neu zeichnen, sonst löst das Setzen der
+        # Schrift wieder ein Configure-Ereignis aus und wir drehen uns im Kreis.
+        if neue_groesse != self.schrift_zeit["size"]:
+            self.schrift_zeit.config(size=neue_groesse)
+
+    def _bei_mausrad(self, ereignis) -> None:
+        """
+        Mausrad ändert die Fenstergröße.
+
+        Die Schrift folgt automatisch, weil sie an der Größe der Zeitanzeige
+        hängt. Im Kompaktmodus ist das der einzige Weg zu skalieren, denn
+        ohne Titelleiste gibt es keinen Rahmen zum Ziehen.
+        """
+        faktor = 1.1 if ereignis.delta > 0 else 1 / 1.1
+
+        if self._kompakt:
+            # Die Höhe wird nicht mitskaliert, sondern aus der Breite
+            # berechnet - so bleibt der Rand oben und unten immer knapp.
+            breite = max(int(self.root.winfo_width() * faktor), MINDESTGROESSE_KOMPAKT[0])
+            hoehe = max(self._kompakte_hoehe(breite), MINDESTGROESSE_KOMPAKT[1])
+        else:
+            breite = max(int(self.root.winfo_width() * faktor), self._mindestgroesse_normal[0])
+            hoehe = max(int(self.root.winfo_height() * faktor), self._mindestgroesse_normal[1])
+
+        self.root.geometry(f"{breite}x{hoehe}")
+
+    # ------------------------------------------------------------------
+    # Kompaktmodus
+    # ------------------------------------------------------------------
+
+    def aktion_kompakt(self) -> None:
+        """Schaltet zwischen normaler Ansicht und reiner Zeitanzeige um."""
+        if self._kompakt:
+            self._kompakt_aus()
+        else:
+            self._kompakt_ein()
+
+    def _kompakt_ein(self) -> None:
+        """Blendet alles außer der Zeit aus und entfernt die Titelleiste."""
+        self._kompakt = True
+        self._groesse_normal = f"{self.root.winfo_width()}x{self.root.winfo_height()}"
+
+        for widget in (self.label_zustand, self.button_reihe, self.label_hotkeys, self.fussleiste):
+            widget.pack_forget()
+        self.zeit_bereich.pack_configure(pady=0)
+        self.rahmen.config(**RAND_KOMPAKT)
+
+        position = (self.root.winfo_x(), self.root.winfo_y())
+
+        # overrideredirect entfernt die komplette Fensterdekoration:
+        # Titelleiste, Rahmen und die Knöpfe zum Schließen.
+        self.root.overrideredirect(True)
+        # Ohne Titelleiste taucht das Fenster unter Windows nicht mehr in der
+        # Taskleiste auf. Damit es nicht hinter dem Spiel verschwindet und
+        # unerreichbar wird, halten wir es hier immer im Vordergrund -
+        # unabhängig von der Checkbox.
+        self.root.attributes("-topmost", True)
+        self.root.minsize(*MINDESTGROESSE_KOMPAKT)
+
+        # Zuletzt genutzte Breite wiederherstellen, beim ersten Mal die
+        # natürliche nehmen. Die Höhe folgt immer aus der Breite.
+        self.root.update_idletasks()
+        breite = self._breite_kompakt or self.root.winfo_reqwidth()
+        breite = max(breite, MINDESTGROESSE_KOMPAKT[0])
+        hoehe = max(self._kompakte_hoehe(breite), MINDESTGROESSE_KOMPAKT[1])
+        self.root.geometry(f"{breite}x{hoehe}+{position[0]}+{position[1]}")
+
+        # Ersatz für die fehlende Titelleiste: ziehen, Doppelklick zurück,
+        # Rechtsklick für das Menü.
+        self.root.bind("<Button-1>", self._zieh_start)
+        self.root.bind("<B1-Motion>", self._zieh_bewegung)
+        self.root.bind("<Double-Button-1>", lambda ereignis: self.aktion_kompakt())
+        self.root.bind("<Button-3>", self._zeige_kontextmenue)
+        self.label_zeit.config(cursor="fleur")
+
+    def _kompakt_aus(self) -> None:
+        """Stellt die normale Ansicht mit Titelleiste wieder her."""
+        self._kompakt = False
+        self._breite_kompakt = self.root.winfo_width()
+
+        for ereignis in ("<Button-1>", "<B1-Motion>", "<Double-Button-1>", "<Button-3>"):
+            self.root.unbind(ereignis)
+        self.label_zeit.config(cursor="")
+
+        position = (self.root.winfo_x(), self.root.winfo_y())
+
+        self.root.overrideredirect(False)
+        # Nach dem Zurückschalten fehlt der Eintrag in der Taskleiste, bis das
+        # Fenster einmal aus- und wieder eingeblendet wurde.
+        self.root.withdraw()
+        self.root.deiconify()
+        self.root.attributes("-topmost", self.var_immer_vorne.get())
+        self.root.minsize(*self._mindestgroesse_normal)
+
+        self.rahmen.config(**RAND_NORMAL)
+        self.zeit_bereich.pack_configure(pady=(4, 0))
+        # In derselben Reihenfolge wie beim Aufbau wieder einhängen, sonst
+        # landet die Fußleiste über den Buttons.
+        self.label_zustand.pack(pady=(0, 10))
+        self.button_reihe.pack(fill="x")
+        self.label_hotkeys.pack(pady=(10, 0), fill="x")
+        self.fussleiste.pack(fill="x", pady=(8, 0))
+
+        self.root.geometry(self._groesse_normal or "")
+        self.root.update_idletasks()
+        self.root.geometry(f"+{position[0]}+{position[1]}")
+
+    def _zieh_start(self, ereignis) -> None:
+        """Merkt sich, an welcher Stelle im Fenster gegriffen wurde."""
+        self._zieh_versatz = (
+            ereignis.x_root - self.root.winfo_x(),
+            ereignis.y_root - self.root.winfo_y(),
+        )
+
+    def _zieh_bewegung(self, ereignis) -> None:
+        """Verschiebt das Fenster mit der Maus."""
+        x = ereignis.x_root - self._zieh_versatz[0]
+        y = ereignis.y_root - self._zieh_versatz[1]
+        self.root.geometry(f"+{x}+{y}")
+
+    def _zeige_kontextmenue(self, ereignis) -> None:
+        try:
+            self.kontextmenue.tk_popup(ereignis.x_root, ereignis.y_root)
+        finally:
+            # grab_release verhindert, dass das Menü die Maus festhält, wenn
+            # man daneben klickt.
+            self.kontextmenue.grab_release()
 
     # ------------------------------------------------------------------
     # Hotkeys und Einstellungen
@@ -233,15 +572,29 @@ class TimerFenster:
             self.root, self.hotkeys, self._aktualisiere_hotkey_zeile
         )
 
+    def oeffne_zeit_eingabe(self) -> None:
+        """Fragt eine Zeit ab und übernimmt sie in den Timer."""
+        if self._zeit_eingabe is not None and self._zeit_eingabe.existiert():
+            self._zeit_eingabe.in_den_vordergrund()
+            return
+
+        self._zeit_eingabe = ZeitEingabe(
+            self.root, self.timer.formatierte_zeit(), self._uebernimm_zeit
+        )
+
+    def _uebernimm_zeit(self, sekunden: float) -> None:
+        self.timer.setze_zeit(sekunden)
+        self._zeichne_neu()
+
     def _beim_schliessen(self) -> None:
-        """Wird beim Klick auf das X aufgerufen."""
+        """Wird beim Klick auf das X oder über das Kontextmenü aufgerufen."""
         self.hotkeys.stoppe()
         self.root.destroy()
 
     # ------------------------------------------------------------------
     # Aktionen
     #
-    # Alle vier laufen im GUI-Thread: entweder direkt durch einen Klick,
+    # Alle laufen im GUI-Thread: entweder direkt durch einen Klick,
     # oder von einem Hotkey über root.after(0, ...) hierher weitergereicht.
     # ------------------------------------------------------------------
 
@@ -263,7 +616,10 @@ class TimerFenster:
 
     def _setze_immer_vorne(self) -> None:
         """Hält das Fenster über allen anderen Fenstern."""
-        self.root.attributes("-topmost", self.var_immer_vorne.get())
+        # Im Kompaktmodus ist "immer vorn" ohnehin erzwungen, dann darf die
+        # Checkbox das nicht wieder abschalten.
+        if not self._kompakt:
+            self.root.attributes("-topmost", self.var_immer_vorne.get())
 
     # ------------------------------------------------------------------
     # Anzeige aktualisieren
@@ -277,7 +633,16 @@ class TimerFenster:
         Aufruf frisch aus. Wenn dieser Aufruf mal 5 ms zu spät kommt, zeigt
         er trotzdem die korrekte Zeit an.
         """
-        self.label_zeit.config(text=self.timer.formatierte_zeit())
+        alter_text = self.label_zeit.cget("text")
+        neuer_text = self.timer.formatierte_zeit()
+        self.label_zeit.config(text=neuer_text)
+
+        # Wird der Text länger (ab 10 Minuten, ab einer Stunde), passt die
+        # bisherige Schriftgröße unter Umständen nicht mehr.
+        if len(neuer_text) != len(alter_text):
+            self._passe_schrift_an(
+                self.zeit_bereich.winfo_width(), self.zeit_bereich.winfo_height()
+            )
 
         if self.timer.zustand is not self._letzter_zustand:
             self._aktualisiere_buttons()

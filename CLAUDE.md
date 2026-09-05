@@ -37,8 +37,13 @@ timer_logik.py   nur time + enum, kennt weder tkinter noch pynput
 stil.py          nur Konstanten, hängt von nichts ab
 hotkeys.py       pynput + json; fasst NIE ein Widget an
 einstellungen.py -> hotkeys, stil
-main.py          -> timer_logik, hotkeys, einstellungen, stil
+zeit_eingabe.py  -> timer_logik, stil
+main.py          -> timer_logik, hotkeys, einstellungen, zeit_eingabe, stil
 ```
+
+Auch die Zeiteingabe hält sich an die Trennung: `lies_zeit()` (Text →
+Sekunden) steht in `timer_logik.py` und ist ohne GUI getestet, das Fenster in
+`zeit_eingabe.py` ruft sie nur auf.
 
 `stil.py` existiert ausschließlich, damit Haupt- und Einstellungsfenster
 dieselben Farben teilen können, ohne dass `main` und `einstellungen` sich
@@ -93,6 +98,52 @@ Aufnahme geschlossen wird.
 
 `lade_belegung()` stürzt nie ab: fehlende Datei, kaputtes JSON, unsinnige oder
 doppelt vergebene Einträge führen still zur Standardbelegung.
+
+### Skalierende Zeitanzeige
+
+Die Schriftgröße der Zeit wird aus der verfügbaren Fläche berechnet
+(`_passe_schrift_an`), nicht umgekehrt. Das ergibt eine Rückkopplung, die
+sich ohne Gegenmaßnahme endlos hochschaukelt — größere Schrift, größerer
+Bereich, noch größere Schrift; das Fenster hängt dann schon beim Aufbau.
+
+Unterbrochen wird sie durch `self.zeit_bereich.pack_propagate(False)`: Der
+Frame um die Zeitanzeige übernimmt nicht mehr die Größe seines Inhalts,
+sondern bekommt sie vom Fenster. **Diese Zeile darf nicht entfernt werden.**
+Die `width`/`height` des Frames dienen nur noch als natürliche Größe, aus der
+tkinter beim Start und bei `geometry("")` die Fenstergröße ableitet.
+
+Gerechnet wird mit der **Ziffernhöhe**, nicht mit `linespace`. Die Zeilenhöhe
+einer Schrift reicht von den Oberlängen bis unter die Grundlinie; Ziffern
+nutzen davon nur rund 60 % (`ZIFFERN_ANTEIL`, an gerenderten Pixeln
+nachgemessen). Mit `linespace` blieben über und unter der Zeit etwa 25 % der
+Fensterhöhe ungenutzt.
+
+Im Kompaktmodus wird die Fensterhöhe zusätzlich aus der Breite berechnet
+(`_kompakte_hoehe`) statt frei mitskaliert — sonst entsteht Leerraum, sobald
+das Fenster höher ist, als die Schriftgröße braucht.
+
+Schriften skalieren linear, deshalb wird der Text einmal in
+`SCHRIFT_REFERENZ` vermessen und daraus hochgerechnet, statt Größen
+durchzuprobieren. Die Neuberechnung läuft nur bei Größenänderung und bei
+geänderter Textlänge (ab 10 Minuten, ab einer Stunde) — nicht 60-mal pro
+Sekunde.
+
+### Kompaktmodus
+
+`overrideredirect(True)` entfernt die gesamte Fensterdekoration. Daraus
+folgen drei Dinge, die alle in `main.py` behandelt sind:
+
+- Das Fenster verschwindet aus der Taskleiste. Deshalb wird `-topmost` im
+  Kompaktmodus erzwungen und beim Zurückschalten wieder auf den Wert der
+  Checkbox gesetzt — sonst wäre das Fenster hinter einem Spiel unerreichbar.
+- Es gibt kein X mehr und keinen Rahmen zum Ziehen. Ersatz sind Maus-Bindings
+  (`<B1-Motion>`) und ein Rechtsklick-Menü mit „Beenden". Ohne diesen Ausweg
+  könnte man sich aussperren, falls der Hotkey nicht greift.
+- Nach `overrideredirect(False)` fehlt der Taskleisteneintrag, bis das Fenster
+  einmal `withdraw()`/`deiconify()` durchlaufen hat.
+
+Beim Zurückschalten müssen die Elemente in derselben Reihenfolge wie im
+Aufbau gepackt werden — `pack()` hängt immer hinten an.
 
 ## Fallstricke beim Testen der GUI
 

@@ -15,6 +15,9 @@ Vordergrund läuft.
 - Nach einem Stop lässt sich der Lauf fortsetzen, statt neu zu beginnen
 - Frei belegbare Hotkeys mit Erkennung von Doppelbelegungen
 - Anzeige im Format `M:SS.mmm`, ab einer Stunde `H:MM:SS.mmm`
+- Kompaktmodus: nur die Zeit, ohne Titelleiste – als Overlay neben dem Spiel
+- Frei skalierbar: die Zeitanzeige wächst mit dem Fenster
+- Zeit von Hand setzbar
 - Fenster wahlweise immer im Vordergrund, dunkles Farbschema
 
 Nicht enthalten: Splits, Bestzeiten-Vergleiche, Netzwerkfunktionen.
@@ -68,6 +71,7 @@ werden.
 | Pause  | `F12` + `P` | Hält die Zeit an, erneut gedrückt läuft sie weiter |
 | Stop   | `F12` + `X` | Friert die Zeit ein |
 | Reset  | `F12` + `R` | Setzt die Anzeige auf 0 zurück |
+| Kompakt | `F12` + `K` | Schaltet zwischen normaler Ansicht und reiner Zeitanzeige um |
 
 Halte `F12` gedrückt und tippe die zweite Taste an. Die Reihenfolge spielt
 keine Rolle, und `F12` allein löst nichts aus.
@@ -80,6 +84,60 @@ Pausen zählen nicht mit. Wer nach 10 Sekunden pausiert, eine Minute wartet
 und dann fortsetzt, steht weiterhin bei 10 Sekunden. Für Stopps gilt
 dasselbe – ein Stop friert die Zeit nur ein. Einen frischen Lauf beginnst du
 mit Reset und dann Start.
+
+## Zeit von Hand setzen
+
+Der Knopf **Zeit** öffnet ein Feld, in das sich die Zeit direkt eintragen
+lässt – praktisch, wenn der Start verpasst wurde oder ein Lauf ab einer
+Zwischenzeit geübt werden soll. Im Kompaktmodus geht das über das
+Rechtsklick-Menü.
+
+Erlaubt sind mehrere Schreibweisen, Komma und Punkt gelten beide als
+Dezimaltrenner:
+
+| Eingabe | Bedeutung |
+|---|---|
+| `12` | 12 Sekunden |
+| `1:23` | 1 Minute 23 Sekunden |
+| `1:23,456` | mit Millisekunden |
+| `2:03:04.5` | 2 Stunden 3 Minuten 4,5 Sekunden |
+
+Der Zustand bleibt dabei erhalten: Ein laufender Timer läuft ab dem neuen
+Wert weiter, ein pausierter bleibt stehen. Nur aus *Bereit* wird *Gestoppt* –
+„bereit“ heißt ja, dass die Uhr auf null steht.
+
+## Fenstergröße
+
+Das Fenster lässt sich in beiden Ansichten frei skalieren – die Zeitanzeige
+wächst und schrumpft mit. In der normalen Ansicht geht das wie gewohnt am
+Fensterrand, zusätzlich in beiden Ansichten mit dem **Mausrad**. Im
+Kompaktmodus ist das Mausrad der einzige Weg, weil dort der Fensterrand
+fehlt.
+
+Nach unten begrenzt die Größe der Bedienelemente, wie klein es werden kann;
+im Kompaktmodus geht es deutlich weiter herunter.
+
+## Kompaktmodus
+
+![Der Kompaktmodus: nur die Zeitanzeige, ohne Titelleiste](screenshot-kompakt.png)
+
+Der Knopf **Kompakt** (oder `F12`+`K`) reduziert das Fenster auf die reine
+Zeitanzeige und blendet dabei auch die Titelleiste aus – praktisch als
+Overlay neben dem Spiel.
+
+Weil in dieser Ansicht die Titelleiste fehlt, übernehmen Maus und
+Kontextmenü deren Aufgaben:
+
+- **Ziehen** mit der linken Maustaste verschiebt das Fenster
+- **Doppelklick** kehrt zur normalen Ansicht zurück
+- **Rechtsklick** öffnet ein Menü mit *Normale Ansicht* und *Beenden*
+
+- **Mausrad** vergrößert und verkleinert das Fenster
+
+Im Kompaktmodus hält sich das Fenster immer im Vordergrund, unabhängig von
+der Checkbox. Ohne Titelleiste erscheint es nämlich nicht in der Taskleiste –
+es würde sonst hinter dem Spiel verschwinden und wäre nicht mehr erreichbar.
+Beim Zurückschalten gilt wieder, was die Checkbox sagt.
 
 ## Hotkeys ändern
 

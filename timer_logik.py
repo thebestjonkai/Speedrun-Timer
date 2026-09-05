@@ -46,6 +46,56 @@ def formatiere_zeit(sekunden: float) -> str:
     return f"{minuten}:{sek:02d}.{millisekunden:03d}"
 
 
+def lies_zeit(text: str) -> float | None:
+    """
+    Wandelt eine von Hand eingegebene Zeit in Sekunden um.
+
+    Erlaubt sind ein bis drei durch ":" getrennte Teile, der letzte davon
+    mit Nachkommastellen. Komma und Punkt gelten beide als Dezimaltrenner,
+    damit die deutsche Tastatur nicht stört.
+
+        "12"          ->    12.0     (Sekunden)
+        "1:23"        ->    83.0
+        "1:23,5"      ->    83.5
+        "2:03:04.567" -> 7384.567
+
+    Gibt None zurück, wenn sich der Text nicht deuten lässt.
+    """
+    if not isinstance(text, str):
+        return None
+
+    text = text.strip().replace(",", ".")
+    if not text:
+        return None
+
+    teile = text.split(":")
+    if len(teile) > 3:
+        return None
+
+    # Nur der letzte Teil darf Nachkommastellen haben.
+    for teil in teile[:-1]:
+        if not teil.strip().isdigit():
+            return None
+
+    try:
+        werte = [float(teil) for teil in teile]
+    except ValueError:
+        return None
+
+    if any(wert < 0 for wert in werte):
+        return None
+
+    # Minuten und Sekunden dürfen 59 nicht überschreiten, sonst wäre die
+    # Eingabe mehrdeutig ("1:70" wäre entweder falsch oder 2:10 gemeint).
+    if len(werte) >= 2 and any(wert >= 60 for wert in werte[1:]):
+        return None
+
+    sekunden = 0.0
+    for wert in werte:
+        sekunden = sekunden * 60 + wert
+    return sekunden
+
+
 class Timer:
     """
     Der eigentliche Timer als Zustandsautomat.
@@ -175,6 +225,28 @@ class Timer:
             self._angesammelt += time.perf_counter() - self._start_zeitpunkt
         self._start_zeitpunkt = None
         self.zustand = Zustand.GESTOPPT
+        return True
+
+    def setze_zeit(self, sekunden: float) -> bool:
+        """
+        Setzt die Zeit von Hand auf einen bestimmten Wert.
+
+        Der Zustand bleibt erhalten, nur der Zählerstand ändert sich:
+        Ein laufender Timer läuft ab dem neuen Wert weiter, ein pausierter
+        bleibt stehen. Aus BEREIT wird GESTOPPT - "bereit" heißt ja gerade,
+        dass die Uhr auf null steht, und das stimmt dann nicht mehr.
+        """
+        if sekunden < 0:
+            return False
+
+        self._angesammelt = float(sekunden)
+        if self.zustand is Zustand.LAEUFT:
+            # Neuer Bezugspunkt, sonst käme die bisher gelaufene Zeit obendrauf.
+            self._start_zeitpunkt = time.perf_counter()
+        else:
+            self._start_zeitpunkt = None
+            if self.zustand is Zustand.BEREIT:
+                self.zustand = Zustand.GESTOPPT
         return True
 
     def zuruecksetzen(self) -> bool:
