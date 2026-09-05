@@ -1,7 +1,7 @@
 """
-Kleines Testskript fuer die Timer-Logik - ganz ohne GUI.
+Kleines Testskript für die Timer-Logik - ganz ohne GUI.
 
-Ausfuehren mit:  python test_timer_logik.py
+Ausführen mit:  python test_timer_logik.py
 
 Es braucht keine Zusatzpakete. Jeder Test ist eine Funktion, die mit
 "assert" eine Behauptung aufstellt. Stimmt sie nicht, bricht der Test mit
@@ -20,7 +20,7 @@ def test_formatierung():
     # Ab einer Stunde kommt die Stundenstelle dazu.
     assert formatiere_zeit(3600) == "1:00:00.000"
     assert formatiere_zeit(3661.007) == "1:01:01.007"
-    # Negative Werte duerfen nicht zu kaputtem Text fuehren.
+    # Negative Werte dürfen nicht zu kaputtem Text führen.
     assert formatiere_zeit(-5) == "0:00.000"
 
 
@@ -39,7 +39,7 @@ def test_start_laesst_zeit_laufen():
 
 
 def test_zweiter_start_wird_ignoriert():
-    """Start ist nur aus BEREIT erlaubt - sonst wuerde die Zeit zurueckspringen."""
+    """Start während des Laufens darf die Zeit nicht zurücksetzen."""
     t = Timer()
     t.start()
     time.sleep(0.05)
@@ -56,7 +56,7 @@ def test_pause_friert_zeit_ein():
 
     zeit_bei_pause = t.verstrichene_zeit()
     time.sleep(0.05)
-    # Waehrend der Pause darf sich der Wert nicht veraendern.
+    # Während der Pause darf sich der Wert nicht verändern.
     assert t.verstrichene_zeit() == zeit_bei_pause
 
 
@@ -70,12 +70,25 @@ def test_pausendauer_zaehlt_nicht_mit():
     assert t.zustand is Zustand.LAEUFT
     time.sleep(0.05)
 
-    # Gelaufen sind rund 0,10 s. Die 0,20 s Pause duerfen nicht auftauchen.
+    # Gelaufen sind rund 0,10 s. Die 0,20 s Pause dürfen nicht auftauchen.
     verstrichen = t.verstrichene_zeit()
     assert 0.08 < verstrichen < 0.18, f"unerwartet: {verstrichen}"
 
 
-def test_stop_friert_endgueltig_ein():
+def test_start_waehrend_pause_wird_ignoriert():
+    """Auch aus PAUSIERT heraus darf Start nichts anfassen - dafür ist Pause da."""
+    t = Timer()
+    t.start()
+    time.sleep(0.05)
+    t.pause()
+    zeit_bei_pause = t.verstrichene_zeit()
+
+    assert t.start() is False
+    assert t.zustand is Zustand.PAUSIERT
+    assert t.verstrichene_zeit() == zeit_bei_pause
+
+
+def test_stop_friert_zeit_ein():
     t = Timer()
     t.start()
     time.sleep(0.05)
@@ -85,8 +98,7 @@ def test_stop_friert_endgueltig_ein():
     endzeit = t.verstrichene_zeit()
     time.sleep(0.05)
     assert t.verstrichene_zeit() == endzeit
-    # Aus GESTOPPT heraus geht nur noch Reset.
-    assert t.start() is False
+    # Aus GESTOPPT heraus ergeben Pause und ein weiteres Stop keinen Sinn.
     assert t.pause() is False
     assert t.stop() is False
 
@@ -102,6 +114,53 @@ def test_stop_aus_pause():
     assert t.verstrichene_zeit() == zeit_bei_pause
 
 
+def test_weiterlaufen_nach_stop():
+    """Start setzt einen gestoppten Lauf fort, statt bei 0 zu beginnen."""
+    t = Timer()
+    t.start()
+    time.sleep(0.05)
+    t.stop()
+    zeit_bei_stop = t.verstrichene_zeit()
+
+    time.sleep(0.20)  # Zeit im gestoppten Zustand darf nicht mitzählen
+    assert t.start() is True
+    assert t.zustand is Zustand.LAEUFT
+    # Direkt nach dem Fortsetzen steht die Zeit noch fast auf dem Stop-Wert.
+    assert t.verstrichene_zeit() >= zeit_bei_stop
+    assert t.verstrichene_zeit() < zeit_bei_stop + 0.05
+
+    time.sleep(0.05)
+    verstrichen = t.verstrichene_zeit()
+    assert 0.08 < verstrichen < 0.18, f"unerwartet: {verstrichen}"
+
+
+def test_mehrfaches_stoppen_und_fortsetzen():
+    """Drei kurze Abschnitte mit Stop dazwischen ergeben zusammen die Summe."""
+    t = Timer()
+    for durchgang in range(3):
+        if durchgang == 0:
+            t.start()
+        else:
+            t.start()  # setzt fort
+        time.sleep(0.05)
+        t.stop()
+        time.sleep(0.05)  # Pause zwischen den Abschnitten, zählt nicht mit
+
+    verstrichen = t.verstrichene_zeit()
+    assert 0.13 < verstrichen < 0.25, f"unerwartet: {verstrichen}"
+
+
+def test_startet_neuen_lauf_meldet_richtig():
+    """Diese Abfrage steuert die Beschriftung 'Start' bzw. 'Weiter'."""
+    t = Timer()
+    assert t.startet_neuen_lauf() is True  # BEREIT -> "Start"
+    t.start()
+    t.stop()
+    assert t.startet_neuen_lauf() is False  # GESTOPPT -> "Weiter"
+    t.zuruecksetzen()
+    assert t.startet_neuen_lauf() is True
+
+
 def test_reset_aus_jedem_zustand():
     for aufbau in (
         lambda t: None,                      # BEREIT
@@ -114,7 +173,7 @@ def test_reset_aus_jedem_zustand():
         t.zuruecksetzen()
         assert t.zustand is Zustand.BEREIT
         assert t.verstrichene_zeit() == 0.0
-        # Nach dem Reset muss ein neuer Lauf moeglich sein.
+        # Nach dem Reset muss ein neuer Lauf möglich sein.
         assert t.start() is True
 
 
