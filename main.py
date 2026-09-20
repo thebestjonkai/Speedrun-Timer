@@ -86,6 +86,10 @@ class TimerFenster:
         # Merker, damit wir die Buttons nur dann neu setzen, wenn sich der
         # Zustand wirklich geändert hat, und nicht 60-mal pro Sekunde.
         self._letzter_zustand: Zustand | None = None
+        # Kennung der nächsten eingeplanten Bildschirmaktualisierung. Wird
+        # beim Schließen abbestellt, sonst beschwert sich tkinter über einen
+        # Auftrag für ein Fenster, das es nicht mehr gibt.
+        self._anzeige_auftrag: str | None = None
         # Das Einstellungsfenster, solange es offen ist.
         self._einstellungen: EinstellungsFenster | None = None
         # Das Fenster zur Zeiteingabe, solange es offen ist.
@@ -430,6 +434,22 @@ class TimerFenster:
         """Wie hoch sind die Ziffern selbst - ohne den Leerraum der Zeile?"""
         return int(self._texthoehe(int(schriftgroesse)) * ZIFFERN_ANTEIL)
 
+    def _kompakte_mindestbreite(self) -> int:
+        """
+        Kleinste Fensterbreite im Kompaktmodus für den aktuellen Text.
+
+        Ab einer Stunde wird die Zeit drei Zeichen länger ("1:07:03.412"
+        statt "7:03.412"). Bliebe die Untergrenze dieselbe, ließe sich das
+        Fenster schmaler ziehen, als die kleinste Schrift Platz braucht -
+        die Ziffern wären dann abgeschnitten.
+        """
+        noetig = (
+            self._textbreite(SCHRIFT_MIN, self.label_zeit.cget("text"))
+            + 2 * RAND_KOMPAKT["padx"]
+            + 8
+        )
+        return max(MINDESTGROESSE_KOMPAKT[0], noetig)
+
     def _kompakte_hoehe(self, breite: int) -> int:
         """
         Passende Fensterhöhe im Kompaktmodus zu einer gegebenen Breite.
@@ -452,6 +472,53 @@ class TimerFenster:
                 max(int(self._mess_schrift.metrics("linespace") * ZIFFERN_ANTEIL), 1),
             )
         return self._mass_je_text[text]
+
+    def _setze_zeit_text(self, text: str) -> None:
+        """
+        Schreibt die Zeit in die Anzeige - der einzige Weg dorthin.
+
+        Wird der Text länger oder kürzer (ab 10 Minuten, ab einer Stunde,
+        oder weil eine Zeit geladen bzw. von Hand gesetzt wurde), passt
+        hier die Schriftgröße nach. Genau das fehlte früher beim Laden:
+        Der Text wurde direkt gesetzt, die Schrift blieb auf der Größe für
+        "0:00.000" - und "1:07:03.412" ragte aus dem Fenster heraus.
+
+        Die Länge zu prüfen genügt, weil die Zeit in einer Monospace-Schrift
+        steht: Alle Ziffern sind gleich breit, nur ihre Anzahl zählt.
+        """
+        alter_text = self.label_zeit.cget("text")
+        self.label_zeit.config(text=text)
+        if len(text) != len(alter_text):
+            self._bei_neuer_textlaenge()
+
+    def _bei_neuer_textlaenge(self) -> None:
+        """Zieht Schrift und - im Kompaktmodus - die Fenstergröße nach."""
+        breite = self.zeit_bereich.winfo_width()
+        hoehe = self.zeit_bereich.winfo_height()
+        # Beim Aufbau steht das Fenster noch nicht; dann übernimmt gleich
+        # das <Configure>-Ereignis.
+        if breite <= 1 or hoehe <= 1:
+            return
+
+        self._passe_schrift_an(breite, hoehe)
+
+        if self._kompakt:
+            self._passe_kompakte_groesse_an()
+
+    def _passe_kompakte_groesse_an(self) -> None:
+        """
+        Zieht die Fenstergröße im Kompaktmodus an den neuen Text nach.
+
+        Ohne Titelleiste kann der Text nicht einfach überstehen: Das Fenster
+        wird bei Bedarf breiter, und die Höhe folgt wie immer aus der Breite,
+        damit über und unter den Ziffern kein Leerraum entsteht.
+        """
+        mindestbreite = self._kompakte_mindestbreite()
+        self.root.minsize(mindestbreite, MINDESTGROESSE_KOMPAKT[1])
+
+        breite = max(self.root.winfo_width(), mindestbreite)
+        hoehe = max(self._kompakte_hoehe(breite), MINDESTGROESSE_KOMPAKT[1])
+        self.root.geometry(f"{breite}x{hoehe}")
 
     def _bei_bereich_groesse(self, ereignis) -> None:
         """Wird aufgerufen, wenn die Zeitanzeige mehr oder weniger Platz hat."""
@@ -493,7 +560,7 @@ class TimerFenster:
         if self._kompakt:
             # Die Höhe wird nicht mitskaliert, sondern aus der Breite
             # berechnet - so bleibt der Rand oben und unten immer knapp.
-            breite = max(int(self.root.winfo_width() * faktor), MINDESTGROESSE_KOMPAKT[0])
+            breite = max(int(self.root.winfo_width() * faktor), self._kompakte_mindestbreite())
             hoehe = max(self._kompakte_hoehe(breite), MINDESTGROESSE_KOMPAKT[1])
         else:
             breite = max(int(self.root.winfo_width() * faktor), self._mindestgroesse_normal[0])
@@ -538,13 +605,13 @@ class TimerFenster:
         # unerreichbar wird, halten wir es hier immer im Vordergrund -
         # unabhängig von der Checkbox.
         self.root.attributes("-topmost", True)
-        self.root.minsize(*MINDESTGROESSE_KOMPAKT)
+        self.root.minsize(self._kompakte_mindestbreite(), MINDESTGROESSE_KOMPAKT[1])
 
         # Zuletzt genutzte Breite wiederherstellen, beim ersten Mal die
         # natürliche nehmen. Die Höhe folgt immer aus der Breite.
         self.root.update_idletasks()
         breite = self._breite_kompakt or self.root.winfo_reqwidth()
-        breite = max(breite, MINDESTGROESSE_KOMPAKT[0])
+        breite = max(breite, self._kompakte_mindestbreite())
         hoehe = max(self._kompakte_hoehe(breite), MINDESTGROESSE_KOMPAKT[1])
         self.root.geometry(f"{breite}x{hoehe}+{position[0]}+{position[1]}")
 
@@ -807,7 +874,14 @@ class TimerFenster:
     def _beim_schliessen(self) -> None:
         """Wird beim Klick auf das X oder über das Kontextmenü aufgerufen."""
         self.hotkeys.stoppe()
+        self.beende_anzeige()
         self.root.destroy()
+
+    def beende_anzeige(self) -> None:
+        """Bestellt die nächste eingeplante Aktualisierung ab."""
+        if self._anzeige_auftrag is not None:
+            self.root.after_cancel(self._anzeige_auftrag)
+            self._anzeige_auftrag = None
 
     # ------------------------------------------------------------------
     # Aktionen
@@ -851,22 +925,15 @@ class TimerFenster:
         Aufruf frisch aus. Wenn dieser Aufruf mal 5 ms zu spät kommt, zeigt
         er trotzdem die korrekte Zeit an.
         """
-        alter_text = self.label_zeit.cget("text")
-        neuer_text = self.timer.formatierte_zeit()
-        self.label_zeit.config(text=neuer_text)
-
-        # Wird der Text länger (ab 10 Minuten, ab einer Stunde), passt die
-        # bisherige Schriftgröße unter Umständen nicht mehr.
-        if len(neuer_text) != len(alter_text):
-            self._passe_schrift_an(
-                self.zeit_bereich.winfo_width(), self.zeit_bereich.winfo_height()
-            )
+        self._setze_zeit_text(self.timer.formatierte_zeit())
 
         if self.timer.zustand is not self._letzter_zustand:
             self._aktualisiere_buttons()
             self._letzter_zustand = self.timer.zustand
 
-        self.root.after(AKTUALISIERUNGS_INTERVALL_MS, self._aktualisiere_anzeige)
+        self._anzeige_auftrag = self.root.after(
+            AKTUALISIERUNGS_INTERVALL_MS, self._aktualisiere_anzeige
+        )
 
     def _zeichne_neu(self) -> None:
         """
@@ -875,7 +942,7 @@ class TimerFenster:
         Ohne diesen Aufruf müsste die Oberfläche bis zum nächsten
         16-ms-Takt warten, bevor sie auf einen Klick reagiert.
         """
-        self.label_zeit.config(text=self.timer.formatierte_zeit())
+        self._setze_zeit_text(self.timer.formatierte_zeit())
         self._aktualisiere_buttons()
         self._letzter_zustand = self.timer.zustand
 

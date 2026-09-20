@@ -20,6 +20,7 @@ pip install -r requirements.txt      # nur pynput; tkinter ist in der Stdlib
 python main.py                       # Programm starten
 python test_timer_logik.py           # alle Logiktests
 python test_staende.py               # Tests der Speicherfunktion
+python test_anzeige.py               # Zeitanzeige, baut echte Fenster auf
 python -c "import test_timer_logik as t; t.test_weiterlaufen_nach_stop()"   # ein einzelner Test
 ```
 
@@ -126,13 +127,25 @@ Fensterhöhe ungenutzt.
 
 Im Kompaktmodus wird die Fensterhöhe zusätzlich aus der Breite berechnet
 (`_kompakte_hoehe`) statt frei mitskaliert — sonst entsteht Leerraum, sobald
-das Fenster höher ist, als die Schriftgröße braucht.
+das Fenster höher ist, als die Schriftgröße braucht. Ändert sich dort die
+Textlänge, zieht `_passe_kompakte_groesse_an()` Höhe und Untergrenze nach;
+die Untergrenze kommt aus `_kompakte_mindestbreite()` und hängt am aktuellen
+Text, weil ohne Titelleiste nichts überstehen darf.
 
 Schriften skalieren linear, deshalb wird der Text einmal in
 `SCHRIFT_REFERENZ` vermessen und daraus hochgerechnet, statt Größen
 durchzuprobieren. Die Neuberechnung läuft nur bei Größenänderung und bei
 geänderter Textlänge (ab 10 Minuten, ab einer Stunde) — nicht 60-mal pro
 Sekunde.
+
+**Die Zeit wird ausschließlich über `_setze_zeit_text()` gesetzt**, nie mit
+`label_zeit.config(text=...)`. Nur dort wird die Textlänge verglichen und
+die Schrift nachgezogen. Genau das war ein Fehler: `_zeichne_neu()` schrieb
+den Text direkt, deshalb blieb die Schrift nach dem Laden eines Standes mit
+Stunden auf der Größe für „0:00.000", und „1:07:03.412" ragte aus dem
+Fenster. Die 16-ms-Schleife merkte davon nichts mehr, weil sie nur
+aufeinanderfolgende Texte vergleicht — beide waren ab da elf Zeichen lang.
+`test_anzeige.py` misst diesen Fall nach.
 
 ### Kompaktmodus
 
@@ -204,6 +217,11 @@ kann kein veralteter Stand im Speicher hängen bleiben.
 
 ## Fallstricke beim Testen der GUI
 
+- `test_anzeige.py` baut echte Fenster auf und braucht deshalb einen
+  Bildschirm. Nach jedem Test müssen `hotkeys.stoppe()` **und**
+  `beende_anzeige()` laufen, bevor `root.destroy()` kommt — sonst feuert die
+  16-ms-Schleife in ein zerstörtes Fenster und Tcl meldet
+  `invalid command name ..._aktualisiere_anzeige`.
 - **`root.after()` aus einem fremden Thread wirft `RuntimeError: main thread
   is not in main loop`, wenn kein `mainloop` läuft.** Für Thread-Tests reicht
   `root.update()` nicht, es braucht einen echten `root.mainloop()` mit

@@ -241,6 +241,7 @@ Tasten, passiert beides gleichzeitig.
 | `main.py` | Hauptfenster |
 | `test_timer_logik.py` | Tests der Timer-Logik |
 | `test_staende.py` | Tests der Speicherfunktion |
+| `test_anzeige.py` | Tests der Zeitanzeige, mit echtem Fenster |
 
 Die Zeitmessung stützt sich auf `time.perf_counter()` und zählt nichts hoch,
 sondern berechnet die Anzeige bei jeder Aktualisierung neu. Dadurch kann die
@@ -251,7 +252,12 @@ Zeit weder driften noch springen, wenn Windows die Systemuhr abgleicht.
 ```powershell
 python test_timer_logik.py
 python test_staende.py
+python test_anzeige.py
 ```
 
-Die Tests prüfen Timer-Logik und Speicherfunktion ohne Oberfläche und kommen
-ohne Zusatzpakete aus.
+Timer-Logik und Speicherfunktion werden ohne Oberfläche geprüft.
+`test_anzeige.py` baut dagegen echte Fenster auf und misst nach, dass die
+Zeit hineinpasst – auch bei Werten über einer Stunde, die drei Zeichen
+länger sind. Dass dabei kurz Fenster aufblitzen, ist normal.
+
+Alle Tests kommen ohne Zusatzpakete aus.
