@@ -18,6 +18,9 @@ Vordergrund läuft.
 - Kompaktmodus: nur die Zeit, ohne Titelleiste – als Overlay neben dem Spiel
 - Frei skalierbar: die Zeitanzeige wächst mit dem Fenster
 - Zeit von Hand setzbar
+- Zeiten unter einem Namen speichern und beim nächsten Start fortsetzen –
+  der geladene Stand bleibt geöffnet und wird weiterbearbeitet wie eine Datei
+- Suche über Name und Datum in einem Feld, ohne Filterauswahl
 - Fenster wahlweise immer im Vordergrund, dunkles Farbschema
 
 Nicht enthalten: Splits, Bestzeiten-Vergleiche, Netzwerkfunktionen.
@@ -106,6 +109,60 @@ Der Zustand bleibt dabei erhalten: Ein laufender Timer läuft ab dem neuen
 Wert weiter, ein pausierter bleibt stehen. Nur aus *Bereit* wird *Gestoppt* –
 „bereit“ heißt ja, dass die Uhr auf null steht.
 
+## Zeiten speichern und fortsetzen
+
+Ein längerer Lauf muss nicht in einer Sitzung fertig werden. Gespeicherte
+Stände verhalten sich wie Dateien in einer Textverarbeitung: Man legt einen
+an, lädt ihn später wieder und arbeitet daran weiter.
+
+**Speichern unter …** fragt nach einem Namen und legt die aktuelle Zeit
+darunter ab – zum Beispiel „Any% Übung“ oder „Bosskampf“. Damit ist dieser
+Stand *geöffnet*; sein Name steht ab jetzt in der Titelleiste.
+
+**Speichern** schreibt ohne weitere Rückfrage in den geöffneten Stand –
+dasselbe wie `Strg`+`S` in Word. Ist keiner geöffnet, fragt das Programm
+einmalig nach einem Namen.
+
+Beim nächsten Start erscheint die Liste der gespeicherten Stände von selbst,
+sobald mindestens einer vorhanden ist. Ein Doppelklick auf einen Eintrag
+übernimmt ihn, **Neu beginnen** überspringt die Abfrage. Mitten in einer
+Sitzung führt der Knopf **Laden** zur selben Liste. Das Zeichen ▸ markiert
+darin den gerade geöffneten Stand.
+
+Nach dem Laden steht der Timer auf der gespeicherten Zeit und ist *gestoppt*:
+Der Startknopf heißt dann **Weiter** und setzt den Lauf ab dieser Zeit fort.
+Läuft gerade ein Lauf, fragt der Timer vorher nach – dessen Zeit wäre sonst
+verloren.
+
+Ein Stand bleibt geöffnet, bis ein anderer geladen oder unter einem neuen
+Namen gespeichert wird – auch über **Reset** hinweg, genau wie ein Dokument
+beim Löschen seines Inhalts geöffnet bleibt. Nach einem Reset schreibt
+**Speichern** also `0:00.000` in den geöffneten Stand. Die Titelleiste zeigt
+jederzeit, worauf sich das Speichern bezieht.
+
+### Suchen
+
+Über der Liste liegt ein Suchfeld. Es durchsucht **Name und Datum
+gleichzeitig**, ohne dass vorher ein Filter gewählt werden muss:
+
+| Eingabe | Findet |
+|---|---|
+| `boss` | alle Stände, deren Name „boss“ enthält |
+| `19.09` oder `19.9` | alles vom 19. September – die führende Null ist egal |
+| `09.2026` | den ganzen Monat |
+| `any 20.09` | „Any%…“ **und** vom 20.09. – mehrere Wörter grenzen weiter ein |
+
+Gefiltert wird bei jedem Tastendruck; ein Bestätigen entfällt. `Eingabe` lädt
+den obersten Treffer, `Pfeil runter` springt in die Liste.
+
+Ein Name, der schon vergeben ist, überschreibt den alten Eintrag; das
+Speichern-Fenster weist vorher darauf hin. **Löschen** entfernt den
+markierten Eintrag nach einer Rückfrage.
+
+Gespeichert wird in `timer_staende.json` neben dem Skript. Fehlt die Datei
+oder ist sie beschädigt, startet das Programm ohne gespeicherte Stände,
+statt abzustürzen.
+
 ## Fenstergröße
 
 Das Fenster lässt sich in beiden Ansichten frei skalieren – die Zeitanzeige
@@ -130,7 +187,8 @@ Kontextmenü deren Aufgaben:
 
 - **Ziehen** mit der linken Maustaste verschiebt das Fenster
 - **Doppelklick** kehrt zur normalen Ansicht zurück
-- **Rechtsklick** öffnet ein Menü mit *Normale Ansicht* und *Beenden*
+- **Rechtsklick** öffnet ein Menü mit *Normale Ansicht*, *Zeit eingeben*,
+  *Stand speichern*, *Speichern unter*, *Stand laden* und *Beenden*
 
 - **Mausrad** vergrößert und verkleinert das Fenster
 
@@ -176,9 +234,13 @@ Tasten, passiert beides gleichzeitig.
 | `timer_logik.py` | Zustände und Zeitmessung, komplett ohne Oberfläche |
 | `hotkeys.py` | Globale Tasten, Aufnahme neuer Belegungen, Konfigurationsdatei |
 | `einstellungen.py` | Das Einstellungsfenster |
+| `zeit_eingabe.py` | Das Fenster zum Setzen der Zeit von Hand |
+| `staende.py` | Gespeicherte Zeiten und ihre Datei, ohne Oberfläche |
+| `staende_fenster.py` | Die Fenster zum Speichern und Auswählen |
 | `stil.py` | Farben und Schriften |
 | `main.py` | Hauptfenster |
 | `test_timer_logik.py` | Tests der Timer-Logik |
+| `test_staende.py` | Tests der Speicherfunktion |
 
 Die Zeitmessung stützt sich auf `time.perf_counter()` und zählt nichts hoch,
 sondern berechnet die Anzeige bei jeder Aktualisierung neu. Dadurch kann die
@@ -188,7 +250,8 @@ Zeit weder driften noch springen, wenn Windows die Systemuhr abgleicht.
 
 ```powershell
 python test_timer_logik.py
+python test_staende.py
 ```
 
-Die Tests prüfen die Timer-Logik ohne Oberfläche und kommen ohne
-Zusatzpakete aus.
+Die Tests prüfen Timer-Logik und Speicherfunktion ohne Oberfläche und kommen
+ohne Zusatzpakete aus.

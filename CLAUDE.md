@@ -19,12 +19,13 @@ Texten, ASCII in Namen.
 pip install -r requirements.txt      # nur pynput; tkinter ist in der Stdlib
 python main.py                       # Programm starten
 python test_timer_logik.py           # alle Logiktests
+python test_staende.py               # Tests der Speicherfunktion
 python -c "import test_timer_logik as t; t.test_weiterlaufen_nach_stop()"   # ein einzelner Test
 ```
 
-Die Tests kommen ohne pytest aus: `test_timer_logik.py` sammelt am Dateiende
-selbst alle `test_*`-Funktionen ein. Ein Import der Datei führt nichts aus,
-deshalb funktioniert der Einzelaufruf oben.
+Die Tests kommen ohne pytest aus: Jede Testdatei sammelt am Dateiende selbst
+alle `test_*`-Funktionen ein. Ein Import führt nichts aus, deshalb
+funktioniert der Einzelaufruf oben.
 
 Es gibt keinen Linter und keinen Build-Schritt.
 
@@ -36,14 +37,19 @@ Abhängigkeiten laufen strikt in eine Richtung:
 timer_logik.py   nur time + enum, kennt weder tkinter noch pynput
 stil.py          nur Konstanten, hängt von nichts ab
 hotkeys.py       pynput + json; fasst NIE ein Widget an
+staende.py       nur json + datetime + pathlib, kennt kein tkinter
 einstellungen.py -> hotkeys, stil
 zeit_eingabe.py  -> timer_logik, stil
-main.py          -> timer_logik, hotkeys, einstellungen, zeit_eingabe, stil
+staende_fenster.py -> staende, timer_logik, stil
+main.py          -> timer_logik, hotkeys, einstellungen, zeit_eingabe,
+                    staende, staende_fenster, stil
 ```
 
 Auch die Zeiteingabe hält sich an die Trennung: `lies_zeit()` (Text →
 Sekunden) steht in `timer_logik.py` und ist ohne GUI getestet, das Fenster in
-`zeit_eingabe.py` ruft sie nur auf.
+`zeit_eingabe.py` ruft sie nur auf. Genauso bei den gespeicherten Ständen:
+Liste, Namensprüfung und Datei liegen in `staende.py`, die Fenster in
+`staende_fenster.py` rufen nur fertige Funktionen auf.
 
 `stil.py` existiert ausschließlich, damit Haupt- und Einstellungsfenster
 dieselben Farben teilen können, ohne dass `main` und `einstellungen` sich
@@ -145,6 +151,57 @@ folgen drei Dinge, die alle in `main.py` behandelt sind:
 Beim Zurückschalten müssen die Elemente in derselben Reihenfolge wie im
 Aufbau gepackt werden — `pack()` hängt immer hinten an.
 
+### Gespeicherte Stände
+
+`staende.py` hält die Liste und die Datei `timer_staende.json`; die Fenster
+in `staende_fenster.py` laden und schreiben sie selbst. `main.py` merkt sich
+bewusst **keine** Liste — es fragt bei jedem Öffnen frisch die Datei ab, so
+kann kein veralteter Stand im Speicher hängen bleiben.
+
+- Das `datetime` in `staende.py` ist **reine Beschriftung** für die Liste.
+  Invariante 3 bleibt unberührt: Gemessen wird weiterhin ausschließlich mit
+  `time.perf_counter()` in `timer_logik.py`.
+- Namen werden für Vergleiche `casefold()`-normalisiert, gespeichert aber in
+  der eingegebenen Schreibweise. Sonst entstünden „Lauf 1" und „lauf 1"
+  nebeneinander, die in der Liste gleich aussehen.
+- Beim Laden wird `zuruecksetzen()` **vor** `setze_zeit()` aufgerufen. Damit
+  ist der Zustand danach immer GESTOPPT, egal was vorher war — der
+  Startknopf heißt „Weiter" und setzt ab der geladenen Zeit fort. Läuft
+  gerade ein Lauf, fragt `_uebernimm_stand` vorher nach.
+- **Der geladene Stand bleibt „geöffnet"** (`TimerFenster._offener_stand`),
+  wie eine Datei in einer Textverarbeitung: `aktion_speichern` schreibt dann
+  ohne Rückfrage hinein, `oeffne_speichern_unter` vergibt einen neuen Namen
+  und öffnet diesen. Angezeigt wird der offene Stand in der **Titelleiste** —
+  eine Beschriftung in der Fußzeile würde das Fenster je nach Namenslänge um
+  bis zu 100 Pixel breiter machen.
+- Ein Reset schließt den Stand **nicht**. Das ist gewollt (Word schließt ein
+  Dokument auch nicht, wenn man seinen Inhalt löscht), hat aber die Folge,
+  dass „Speichern" danach `0:00.000` in den offenen Stand schreibt.
+- Löscht `StandAuswahl` den gerade offenen Stand, meldet sie das über
+  `bei_loeschung` zurück; `main.py` setzt `_offener_stand` auf None. Sonst
+  würde der nächste Klick auf „Speichern" den eben gelöschten Eintrag
+  stillschweigend wieder anlegen.
+- `StandAuswahl._laden` schließt das Fenster **vor** der Rückmeldung an
+  `main.py`. Sonst läge der modale Griff (`grab_set`) noch auf ihm, während
+  die Rückfrage-Messagebox erscheinen will.
+- Die Toplevel-Fenster übernehmen `-topmost` vom Hauptfenster. Im
+  Kompaktmodus ist das erzwungen — ohne diese Übernahme läge ein modales
+  Fenster dahinter und wäre nicht bedienbar, blockierte aber die Eingabe.
+- Die Suche kennt bewusst keine Filterauswahl: `passt_zur_suche` durchsucht
+  Name und Datum in einem Rutsch, mehrere Wörter grenzen per UND ein. Beide
+  Seiten laufen durch `_such_text`, das führende Nullen in Zahlen entfernt —
+  so findet „19.9" auch den 19.09. Das `\b` im Muster ist entscheidend:
+  ohne es würde aus „2026" die Zahl „226".
+- Die Stand-Knöpfe stehen in einer **zweiten** Fußzeile. In einer Reihe mit
+  den übrigen trieben sie die Mindestbreite des Fensters von 330 auf 468
+  Pixel — nachgemessen über `_mindestgroesse_normal`. Aus demselben Grund
+  steht dort links nur „Stand" und kein Name: Die zweite Zeile hat knapp
+  46 Pixel Luft, bevor sie die erste als breitestes Element ablöst.
+- `lade_staende()` stürzt nie ab: fehlende Datei, kaputtes JSON, falsche
+  Typen, negative Zeiten und doppelte Namen führen still zu einer
+  bereinigten (notfalls leeren) Liste — dieselbe Haltung wie
+  `lade_belegung()`.
+
 ## Fallstricke beim Testen der GUI
 
 - **`root.after()` aus einem fremden Thread wirft `RuntimeError: main thread
@@ -154,7 +211,9 @@ Aufbau gepackt werden — `pack()` hängt immer hinten an.
   Sekundenbruchteil beim Schließen auf und wird dort abgefangen.)
 - Tests, die die Konfiguration schreiben, müssen vorher
   `hotkeys.KONFIG_DATEI` auf eine Testdatei umbiegen — sonst wird die echte
-  `timer_config.json` überschrieben.
+  `timer_config.json` überschrieben. Dasselbe gilt für
+  `staende.STAENDE_DATEI`; `test_staende.py` erledigt das über den Helfer
+  `mit_testdatei()`, der auch nach einem fehlgeschlagenen Test aufräumt.
 - `messagebox.showerror` blockiert; in Tests ersetzen.
 - Die vier Hauptbuttons haben eine feste `width`, weil ihre Beschriftung
   zwischen "Start"/"Weiter" bzw. "Pause"/"Weiter" wechselt. Ohne feste Breite
@@ -162,7 +221,8 @@ Aufbau gepackt werden — `pack()` hängt immer hinten an.
 
 ## Repository
 
-`timer_config.json` und `__pycache__/` sind über `.gitignore` ausgenommen.
-Die Konfigurationsdatei entsteht erst beim ersten Ändern eines Hotkeys; in
-einem frischen Klon fehlt sie, und das Programm startet mit der
-Standardbelegung.
+`timer_config.json`, `timer_staende.json` und `__pycache__/` sind über
+`.gitignore` ausgenommen. Beide JSON-Dateien entstehen erst bei der ersten
+Nutzung (Hotkey ändern bzw. Stand speichern); in einem frischen Klon fehlen
+sie, und das Programm startet mit Standardbelegung und ohne gespeicherte
+Stände.

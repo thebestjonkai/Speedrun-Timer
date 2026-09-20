@@ -10,6 +10,8 @@ Die Dateien im Überblick:
   timer_logik.py  - Zustände und Zeitmessung, ganz ohne GUI
   hotkeys.py      - globale Tasten, Aufnahme, timer_config.json
   einstellungen.py- das Fenster zum Neubelegen
+  staende.py      - gespeicherte Zeiten, timer_staende.json
+  staende_fenster.py - Fenster zum Speichern und Auswählen
   stil.py         - Farben und Schriften
   main.py         - dieses Hauptfenster
 """
@@ -17,10 +19,13 @@ Die Dateien im Überblick:
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
+from tkinter import messagebox
 
+import staende
 import stil
 from einstellungen import EinstellungsFenster
 from hotkeys import AKTION_BESCHRIFTUNG, AKTIONEN, HotkeyVerwaltung, lesbare_kombination
+from staende_fenster import SpeicherFenster, StandAuswahl
 from timer_logik import Timer, Zustand
 from zeit_eingabe import ZeitEingabe
 
@@ -85,6 +90,13 @@ class TimerFenster:
         self._einstellungen: EinstellungsFenster | None = None
         # Das Fenster zur Zeiteingabe, solange es offen ist.
         self._zeit_eingabe: ZeitEingabe | None = None
+        # Die Fenster für gespeicherte Stände, solange sie offen sind.
+        self._speicher_fenster: SpeicherFenster | None = None
+        self._auswahl_fenster: StandAuswahl | None = None
+        # Name des "geöffneten" Standes - wie ein geöffnetes Dokument in
+        # einer Textverarbeitung. Solange einer geöffnet ist, schreibt
+        # "Speichern" ohne Rückfrage hinein. None heißt: keiner geöffnet.
+        self._offener_stand: str | None = None
         # Kompaktmodus: nur die Zeit, ohne Titelleiste.
         self._kompakt = False
         # Merkt sich beim Ziehen den Griffpunkt innerhalb des Fensters.
@@ -273,6 +285,59 @@ class TimerFenster:
         )
         self.button_zeit.pack(side="right", padx=(0, 6))
 
+        # --- Zweite Fußzeile: gespeicherte Stände ----------------------
+        # Eine eigene Zeile, weil fünf Knöpfe nebeneinander das Fenster um
+        # rund 140 Pixel breiter machen würden - und damit auch die kleinste
+        # mögliche Fenstergröße.
+        self.fussleiste_stand = tk.Frame(self.rahmen, bg=stil.FARBE_HINTERGRUND)
+        self.fussleiste_stand.pack(fill="x", pady=(6, 0))
+
+        # Nur eine kurze Beschriftung der Zeile. Welcher Stand geöffnet ist,
+        # steht in der Titelleiste - ein Name hier würde das Fenster je nach
+        # Länge um bis zu 100 Pixel breiter machen.
+        tk.Label(
+            self.fussleiste_stand,
+            text="Stand",
+            font=stil.SCHRIFT_KLEIN,
+            bg=stil.FARBE_HINTERGRUND,
+            fg=stil.FARBE_TEXT_GEDIMMT,
+        ).pack(side="left")
+
+        self.button_laden = tk.Button(
+            self.fussleiste_stand,
+            text="Laden",
+            command=self.oeffne_stand_auswahl,
+            font=stil.SCHRIFT_NORMAL,
+            padx=8,
+            pady=2,
+            **{k: v for k, v in stil.knopf_stil().items() if k != "font"},
+        )
+        self.button_laden.pack(side="right")
+
+        self.button_speichern_unter = tk.Button(
+            self.fussleiste_stand,
+            text="Speichern unter …",
+            command=self.oeffne_speichern_unter,
+            font=stil.SCHRIFT_NORMAL,
+            padx=8,
+            pady=2,
+            **{k: v for k, v in stil.knopf_stil().items() if k != "font"},
+        )
+        self.button_speichern_unter.pack(side="right", padx=(0, 6))
+
+        self.button_speichern = tk.Button(
+            self.fussleiste_stand,
+            text="Speichern",
+            command=self.aktion_speichern,
+            font=stil.SCHRIFT_NORMAL,
+            padx=8,
+            pady=2,
+            **{k: v for k, v in stil.knopf_stil().items() if k != "font"},
+        )
+        self.button_speichern.pack(side="right", padx=(0, 6))
+
+        self._zeige_offenen_stand()
+
         self._baue_kontextmenue()
 
         # Mausrad vergrößert und verkleinert das Fenster. Im Kompaktmodus
@@ -313,6 +378,11 @@ class TimerFenster:
         )
         self.kontextmenue.add_command(label="Normale Ansicht", command=self.aktion_kompakt)
         self.kontextmenue.add_command(label="Zeit eingeben …", command=self.oeffne_zeit_eingabe)
+        self.kontextmenue.add_command(label="Stand speichern", command=self.aktion_speichern)
+        self.kontextmenue.add_command(
+            label="Speichern unter …", command=self.oeffne_speichern_unter
+        )
+        self.kontextmenue.add_command(label="Stand laden …", command=self.oeffne_stand_auswahl)
         self.kontextmenue.add_separator()
         self.kontextmenue.add_command(label="Beenden", command=self._beim_schliessen)
 
@@ -447,7 +517,13 @@ class TimerFenster:
         self._kompakt = True
         self._groesse_normal = f"{self.root.winfo_width()}x{self.root.winfo_height()}"
 
-        for widget in (self.label_zustand, self.button_reihe, self.label_hotkeys, self.fussleiste):
+        for widget in (
+            self.label_zustand,
+            self.button_reihe,
+            self.label_hotkeys,
+            self.fussleiste,
+            self.fussleiste_stand,
+        ):
             widget.pack_forget()
         self.zeit_bereich.pack_configure(pady=0)
         self.rahmen.config(**RAND_KOMPAKT)
@@ -507,6 +583,7 @@ class TimerFenster:
         self.button_reihe.pack(fill="x")
         self.label_hotkeys.pack(pady=(10, 0), fill="x")
         self.fussleiste.pack(fill="x", pady=(8, 0))
+        self.fussleiste_stand.pack(fill="x", pady=(6, 0))
 
         self.root.geometry(self._groesse_normal or "")
         self.root.update_idletasks()
@@ -585,6 +662,147 @@ class TimerFenster:
     def _uebernimm_zeit(self, sekunden: float) -> None:
         self.timer.setze_zeit(sekunden)
         self._zeichne_neu()
+
+    # ------------------------------------------------------------------
+    # Gespeicherte Stände
+    # ------------------------------------------------------------------
+
+    def aktion_speichern(self) -> None:
+        """
+        Speichert die aktuelle Zeit - ohne Rückfrage, wenn ein Stand offen ist.
+
+        Das ist das Strg+S-Verhalten: Ein geladener Stand bleibt geöffnet und
+        wird beim Speichern überschrieben. Erst wenn keiner offen ist, fragt
+        das Programm nach einem Namen.
+        """
+        if self._offener_stand is None:
+            self.oeffne_speichern_unter()
+            return
+
+        # Frisch aus der Datei lesen: Womöglich wurde in der Zwischenzeit ein
+        # anderer Stand angelegt oder gelöscht.
+        liste = staende.setze_stand(
+            staende.lade_staende(), self._offener_stand, self.timer.verstrichene_zeit()
+        )
+        if liste is None or not staende.speichere_staende(liste):
+            self._melde("Speichern fehlgeschlagen")
+            return
+
+        self._melde(f"Gespeichert: {self._offener_stand}")
+
+    def oeffne_speichern_unter(self) -> None:
+        """Fragt einen Namen ab und legt die aktuelle Zeit darunter ab."""
+        if self._speicher_fenster is not None and self._speicher_fenster.existiert():
+            self._speicher_fenster.in_den_vordergrund()
+            return
+
+        self._speicher_fenster = SpeicherFenster(
+            self.root,
+            self.timer.verstrichene_zeit(),
+            self._nach_dem_speichern,
+            vorschlag=self._offener_stand,
+        )
+
+    def _nach_dem_speichern(self, name: str) -> None:
+        # Unter einem neuen Namen gespeichert? Dann ist ab jetzt dieser der
+        # geöffnete Stand - genau wie nach "Speichern unter" in Word.
+        self._setze_offenen_stand(name)
+        self._melde(f"Gespeichert: {name}")
+
+    def _setze_offenen_stand(self, name: str | None) -> None:
+        """Merkt sich den geöffneten Stand und zeigt ihn im Fenster an."""
+        self._offener_stand = name
+        self._zeige_offenen_stand()
+
+    def _zeige_offenen_stand(self) -> None:
+        """
+        Schreibt den geöffneten Stand in die Titelleiste.
+
+        Dieselbe Stelle wie bei einem Textprogramm - dort steht schließlich
+        auch, welche Datei gerade offen ist.
+        """
+        if self._offener_stand is None:
+            self.root.title("Speedrun-Timer")
+        else:
+            self.root.title(f"Speedrun-Timer – {self._offener_stand}")
+
+    def _melde(self, text: str) -> None:
+        """
+        Schreibt eine kurze Rückmeldung in die Zustandszeile.
+
+        Nach zwei Sekunden steht dort wieder der Zustand. Ohne dieses
+        Zurücksetzen bliebe die Meldung bis zum nächsten Zustandswechsel
+        stehen - und man wüsste nicht mehr, ob der Timer läuft.
+        """
+        self.label_zustand.config(text=text)
+        self.root.after(
+            2000,
+            lambda: self.label_zustand.config(text=TEXT_JE_ZUSTAND[self.timer.zustand]),
+        )
+
+    def oeffne_stand_auswahl(self, beim_start: bool = False) -> None:
+        """Zeigt die Liste der gespeicherten Stände zum Auswählen."""
+        if self._auswahl_fenster is not None and self._auswahl_fenster.existiert():
+            self._auswahl_fenster.in_den_vordergrund()
+            return
+
+        self._auswahl_fenster = StandAuswahl(
+            self.root,
+            self._uebernimm_stand,
+            beim_start=beim_start,
+            offener_stand=self._offener_stand,
+            bei_loeschung=self._stand_wurde_geloescht,
+        )
+
+    def _stand_wurde_geloescht(self, name: str) -> None:
+        """
+        Der geöffnete Stand wurde in der Liste gelöscht.
+
+        Dann darf er nicht geöffnet bleiben: "Speichern" würde ihn sonst
+        beim nächsten Klick stillschweigend wieder anlegen.
+        """
+        self._setze_offenen_stand(None)
+        self._melde(f"Gelöscht: {name}")
+
+    def frage_start_stand(self) -> None:
+        """
+        Fragt direkt nach dem Programmstart, ob ein Stand fortgesetzt wird.
+
+        Ist noch nichts gespeichert, passiert nichts - dann soll der Timer
+        einfach wie gewohnt bei 0 stehen.
+        """
+        if staende.lade_staende():
+            self.oeffne_stand_auswahl(beim_start=True)
+
+    def _uebernimm_stand(self, stand: dict) -> None:
+        """
+        Setzt den Timer auf die Zeit eines gespeicherten Standes.
+
+        Danach ist der Zustand GESTOPPT: Die Zeit steht auf dem gespeicherten
+        Wert, und der Startknopf heißt "Weiter" - ein Druck darauf setzt den
+        Lauf ab dort fort. Genau dafür ist das Speichern da.
+        """
+        # Läuft gerade ein Lauf, wäre dessen Zeit weg. Das darf nicht
+        # unbemerkt passieren.
+        if self.timer.zustand is Zustand.LAEUFT:
+            if not messagebox.askyesno(
+                "Stand laden",
+                "Der Timer läuft gerade. Die laufende Zeit geht verloren.\n\n"
+                f"„{stand['name']}“ trotzdem laden?",
+                parent=self.root,
+            ):
+                return
+
+        # Erst zurücksetzen, dann die Zeit setzen: So ist der Zustand danach
+        # immer derselbe, egal ob vorher pausiert, gestoppt oder gelaufen.
+        self.timer.zuruecksetzen()
+        self.timer.setze_zeit(stand["sekunden"])
+        self._zeichne_neu()
+
+        # Ab jetzt ist dieser Stand geöffnet: "Speichern" schreibt ohne
+        # weitere Rückfrage wieder hier hinein.
+        self._setze_offenen_stand(stand["name"])
+        self._melde(f"Geladen: {stand['name']}")
 
     def _beim_schliessen(self) -> None:
         """Wird beim Klick auf das X oder über das Kontextmenü aufgerufen."""
@@ -681,7 +899,11 @@ class TimerFenster:
 
 def main() -> None:
     root = tk.Tk()
-    TimerFenster(root)
+    fenster = TimerFenster(root)
+    # Erst wenn die tkinter-Schleife läuft, ist das Hauptfenster sichtbar.
+    # after(0, ...) reiht die Abfrage genau dahinter ein - so erscheint sie
+    # über dem fertigen Fenster statt vor einem leeren Bildschirm.
+    root.after(0, fenster.frage_start_stand)
     root.mainloop()
 
 
